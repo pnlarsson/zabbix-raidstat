@@ -22,7 +22,9 @@ Set `RAIDSTAT_DEBUG=y` to print every executed command, its output, and regex ma
 
 ## Testing
 
-There is no Go test suite. Testing is done against mock data: `testdata/<vendor>.sh` are stub scripts that `cat` canned tool output from `testdata/<vendor>/*.txt` based on the CLI args.
+Run `go test ./...` for the unit suite. It covers the shared `functions` helpers (regex/JSON/trim, and the non-zero-exit tolerance the BBU fix relies on) and the mdstat plugin's pure `parse*`/`normalize*` helpers, which are tested against the committed `testdata/mdstat/*.txt` fixtures. mdstat keeps fetching (exec) separate from parsing so the parsers are unit-testable; follow that split when adding tests for other plugins (their parsing is currently inline with exec).
+
+Mock data also drives a shell-level harness: `testdata/<vendor>.sh` are stub scripts that `cat` canned tool output from `testdata/<vendor>/*.txt` based on the CLI args.
 
 `./testdata/run-tests.sh` (run after `make`) is an assertion-based regression harness: it points `build/config.json` at the mock tools, exercises the multi-vendor discovery/status flow as Zabbix would, asserts the output, and restores the shipped config on exit. Add a case there when fixing a parser. To exercise one parser ad-hoc, point its `config.json` entry at the matching `testdata/<vendor>.sh` and run `raidstat` from the repo root (the mocks use relative paths). When changing a parser's regexes, update the corresponding `testdata/<vendor>/*.txt` fixtures if the real tool output format differs.
 

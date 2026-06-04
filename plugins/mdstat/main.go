@@ -15,6 +15,9 @@ import (
 // reported whenever any md array exists. Each md array is exposed as a logical
 // drive (LD_ID = "md0", "md1", ...) and each component block device as a
 // physical drive (PD_ID = "<array>:<device>", e.g. "md0:sda1").
+//
+// The exported functions fetch mdadm output and delegate to the pure parse*/
+// normalize* helpers below, which are covered by main_test.go.
 
 // deviceLine matches a member row of `mdadm --detail` output, capturing the
 // state (group 1) and the device name (group 2):
@@ -28,27 +31,49 @@ var deviceLine = regexp.MustCompile(`(?m)^\s*\d+\s+\d+\s+\d+\s+\S+\s+(.+?)\s+/de
 // capturing the device path (group 1) and the trailing attributes (group 2).
 var arrayLine = regexp.MustCompile(`(?m)^ARRAY\s+(\S+)(.*)$`)
 
-// getArrays - return md array names (without the /dev/ prefix), e.g. "md0".
+// parseArrayNames - md array names (without the /dev/ prefix) from `--detail --scan`.
 //
 // External-metadata containers (Intel IMSM, DDF) are skipped: they only group
 // disks and carry no array State/size of their own. Their member volumes are
 // listed separately (with "container=") and report the real health.
-func getArrays(execPath string) []string {
-	inputData := functions.GetCommandOutput(execPath, "--detail", "--scan")
-
+func parseArrayNames(scan []byte) []string {
 	arrays := []string{}
-	for _, m := range arrayLine.FindAllStringSubmatch(string(inputData), -1) {
+	for _, m := range arrayLine.FindAllStringSubmatch(string(scan), -1) {
 		dev, attrs := m[1], m[2]
 		if strings.Contains(attrs, "metadata=imsm") || strings.Contains(attrs, "metadata=ddf") {
 			continue
 		}
 		arrays = append(arrays, strings.TrimPrefix(dev, "/dev/"))
 	}
-
 	return arrays
 }
 
-// isStateBad - report whether an md array State indicates a problem.
+// parseMembers - component device names from a single array's `--detail` output.
+func parseMembers(detail []byte) []string {
+	members := []string{}
+	for _, m := range deviceLine.FindAllStringSubmatch(string(detail), -1) {
+		members = append(members, m[2])
+	}
+	return members
+}
+
+// parseArrayState - the array "State : ..." value.
+func parseArrayState(detail []byte) string {
+	return functions.TrimSpacesLeftAndRight(functions.GetRegexpSubmatch(detail, "State :(.*)"))
+}
+
+// parseArraySize - the "Array Size : ..." value.
+func parseArraySize(detail []byte) string {
+	return functions.TrimSpacesLeftAndRight(functions.GetRegexpSubmatch(detail, "Array Size :(.*)"))
+}
+
+// parseMemberState - the state of a single component device within an array.
+func parseMemberState(detail []byte, device string) string {
+	re := fmt.Sprintf("(?m)^\\s*\\d+\\s+\\d+\\s+\\d+\\s+\\S+\\s+(.+?)\\s+/dev/%s\\s*$", regexp.QuoteMeta(device))
+	return functions.TrimSpacesLeftAndRight(functions.GetRegexpSubmatch(detail, re))
+}
+
+// isStateBad - whether an md array State indicates a problem.
 func isStateBad(state string) bool {
 	for _, bad := range []string{"degraded", "FAILED", "Not Started"} {
 		if strings.Contains(state, bad) {
@@ -56,6 +81,32 @@ func isStateBad(state string) bool {
 		}
 	}
 	return false
+}
+
+// normalizeArrayStatus - map a healthy array State to "OK", else pass it through.
+func normalizeArrayStatus(state string) string {
+	if isStateBad(state) {
+		return state
+	}
+	return "OK"
+}
+
+// normalizeMemberState - map a component device state to a Zabbix-friendly value.
+func normalizeMemberState(state string) string {
+	switch {
+	case strings.HasPrefix(state, "active sync"), state == "spare":
+		return "OK"
+	case state == "":
+		// not found in the member table - the device was removed/missing
+		return "removed"
+	default:
+		return state
+	}
+}
+
+// getArrays - md array names from a live mdadm.
+func getArrays(execPath string) []string {
+	return parseArrayNames(functions.GetCommandOutput(execPath, "--detail", "--scan"))
 }
 
 // GetControllersIDs - md has no controllers; report a single pseudo-controller
@@ -77,17 +128,14 @@ func GetPhysicalDrivesIDs(execPath string, controllerID string) []string {
 	data := []string{}
 
 	for _, array := range getArrays(execPath) {
-		inputData := functions.GetCommandOutput(execPath, "--detail", "/dev/"+array)
-
-		result := deviceLine.FindAllStringSubmatch(string(inputData), -1)
+		members := parseMembers(functions.GetCommandOutput(execPath, "--detail", "/dev/"+array))
 
 		if os.Getenv("RAIDSTAT_DEBUG") == "y" {
-			fmt.Printf("Regexp is '%s'\n", deviceLine.String())
-			fmt.Printf("Result is '%s'\n", result)
+			fmt.Printf("Regexp is '%s'\nMembers of %s: %v\n", deviceLine.String(), array, members)
 		}
 
-		for _, v := range result {
-			data = append(data, fmt.Sprintf("%s:%s", array, v[2]))
+		for _, device := range members {
+			data = append(data, fmt.Sprintf("%s:%s", array, device))
 		}
 	}
 
@@ -103,8 +151,7 @@ func GetControllerStatus(execPath string, controllerID string, indent int) []byt
 
 	problems := []string{}
 	for _, array := range getArrays(execPath) {
-		inputData := functions.GetCommandOutput(execPath, "--detail", "/dev/"+array)
-		state := functions.TrimSpacesLeftAndRight(functions.GetRegexpSubmatch(inputData, "State :(.*)"))
+		state := parseArrayState(functions.GetCommandOutput(execPath, "--detail", "/dev/"+array))
 		if isStateBad(state) {
 			problems = append(problems, fmt.Sprintf("%s is %s", array, state))
 		}
@@ -130,18 +177,11 @@ func GetLDStatus(execPath string, controllerID string, deviceID string, indent i
 		Size   string `json:"size"`
 	}
 
-	inputData := functions.GetCommandOutput(execPath, "--detail", "/dev/"+deviceID)
-	state := functions.TrimSpacesLeftAndRight(functions.GetRegexpSubmatch(inputData, "State :(.*)"))
-	size := functions.TrimSpacesLeftAndRight(functions.GetRegexpSubmatch(inputData, "Array Size :(.*)"))
-
-	status := state
-	if !isStateBad(state) {
-		status = "OK"
-	}
+	detail := functions.GetCommandOutput(execPath, "--detail", "/dev/"+deviceID)
 
 	data := ReturnData{
-		Status: status,
-		Size:   size,
+		Status: normalizeArrayStatus(parseArrayState(detail)),
+		Size:   parseArraySize(detail),
 	}
 
 	return append(functions.MarshallJSON(data, indent), "\n"...)
@@ -163,23 +203,10 @@ func GetPDStatus(execPath string, controllerID string, deviceID string, indent i
 	}
 	array, device := parts[0], parts[1]
 
-	inputData := functions.GetCommandOutput(execPath, "--detail", "/dev/"+array)
-	re := fmt.Sprintf("(?m)^\\s*\\d+\\s+\\d+\\s+\\d+\\s+\\S+\\s+(.+?)\\s+/dev/%s\\s*$", regexp.QuoteMeta(device))
-	state := functions.TrimSpacesLeftAndRight(functions.GetRegexpSubmatch(inputData, re))
-
-	var status string
-	switch {
-	case strings.HasPrefix(state, "active sync"), state == "spare":
-		status = "OK"
-	case state == "":
-		// not found in the member table - the device was removed/missing
-		status = "removed"
-	default:
-		status = state
-	}
+	detail := functions.GetCommandOutput(execPath, "--detail", "/dev/"+array)
 
 	data := ReturnData{
-		Status:    status,
+		Status:    normalizeMemberState(parseMemberState(detail, device)),
 		Model:     device,
 		Smart:     "OK", // md exposes no SMART data; report OK so the SMART trigger stays quiet
 		SmartWarn: "0",
