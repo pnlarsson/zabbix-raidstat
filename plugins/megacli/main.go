@@ -75,8 +75,21 @@ func GetControllerStatus(execPath string, controllerID string, indent int) []byt
 		status = strings.Join(healthStatuses, ", ")
 	}
 
-	inputData = functions.GetCommandOutput(execPath, "-AdpBbuCmd", "-GetBbuStatus", fmt.Sprintf("-a%s", controllerID), "-NoLog")
-	batteryStatus := functions.GetRegexpSubmatch(inputData, "Battery State: (.*)")
+	// megacli exits non-zero (e.g. 0x22) and prints no "Battery State" line when the
+	// BBU has failed or is not present, so tolerate the error and parse stdout anyway.
+	inputData = functions.GetCommandOutputAllowExit(execPath, "-AdpBbuCmd", "-GetBbuStatus", fmt.Sprintf("-a%s", controllerID), "-NoLog")
+	batteryStatus := functions.TrimSpacesLeftAndRight(functions.GetRegexpSubmatch(inputData, "Battery State: (.*)"))
+
+	switch {
+	case batteryStatus == "Optimal":
+		batteryStatus = "OK"
+	case batteryStatus == "":
+		// No battery state reported - surface why so the Zabbix trigger fires.
+		batteryStatus = functions.TrimSpacesLeftAndRight(functions.GetRegexpSubmatch(inputData, "FW error description:[\\s]*(.*)"))
+		if batteryStatus == "" {
+			batteryStatus = "Get BBU Status Failed"
+		}
+	}
 
 	data := ReturnData{
 		Status:        functions.TrimSpacesLeftAndRight(status),

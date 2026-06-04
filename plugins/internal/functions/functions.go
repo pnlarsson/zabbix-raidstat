@@ -42,6 +42,39 @@ func GetCommandOutput(execPath string, args ...string) []byte {
 	return data
 }
 
+// GetCommandOutputAllowExit - like GetCommandOutput, but returns stdout even when the
+// command exits non-zero (the tool ran and reported an error, e.g. megacli's "Get BBU
+// Status Failed" with exit code 0x22). Still exits on timeout or if the command could
+// not be started at all.
+func GetCommandOutputAllowExit(execPath string, args ...string) []byte {
+	timeout := 10
+	execContext, contextCancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer contextCancel()
+
+	cmd := exec.CommandContext(execContext, execPath, args...)
+	data, err := cmd.Output()
+
+	if os.Getenv("RAIDSTAT_DEBUG") == "y" {
+		fmt.Printf("Command '%s %s' output is:\n'''\n%s\n'''\n", execPath, strings.Join(args, " "), string(data))
+	}
+
+	if err != nil {
+		if execContext.Err() == context.DeadlineExceeded {
+			fmt.Printf("Command '%s' timed out.\n", cmd)
+			os.Exit(1)
+		}
+
+		// An ExitError means the tool ran but returned non-zero; keep its stdout.
+		// Any other error means it could not be started - that is fatal.
+		if _, ok := err.(*exec.ExitError); !ok {
+			fmt.Printf("Error executing command '%s %s': %s\n", execPath, strings.Join(args, " "), err)
+			os.Exit(1)
+		}
+	}
+
+	return data
+}
+
 // GetRegexpSubmatch - returns string from 1st capture group
 func GetRegexpSubmatch(buf []byte, re string) (data string) {
 	result := regexp.MustCompile(re).FindStringSubmatch(string(buf))

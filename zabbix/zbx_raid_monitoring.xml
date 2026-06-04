@@ -66,7 +66,7 @@
                                 <step>
                                     <type>JSONPATH</type>
                                     <parameters>
-                                        <parameter>$.cachestatus</parameter>
+                                        <parameter>$.batterystatus</parameter>
                                     </parameters>
                                 </step>
                             </preprocessing>
@@ -82,7 +82,7 @@
                             <trigger_prototypes>
                                 <trigger_prototype>
                                     <uuid>e696c5ba2cb0435489773371a715ff96</uuid>
-                                    <expression>find(/Template RAID Monitoring/raidstat.status.controller[{#CT_ID}, batterystatus],,&quot;like&quot;,&quot;OK&quot;)=0</expression>
+                                    <expression>find(/Template RAID Monitoring/raidstat.status.controller[{#CT_ID}, batterystatus],,&quot;like&quot;,&quot;OK&quot;)=0 and &quot;{$RAID_BBU_IGNORE}&quot;&lt;&gt;&quot;1&quot;</expression>
                                     <name>Controller {#CT_ID} battery status is {ITEM.LASTVALUE}</name>
                                     <priority>AVERAGE</priority>
                                 </trigger_prototype>
@@ -383,6 +383,13 @@
                     </item_prototypes>
                 </discovery_rule>
             </discovery_rules>
+            <macros>
+                <macro>
+                    <macro>{$RAID_BBU_IGNORE}</macro>
+                    <value>0</value>
+                    <description>Set to 1 on hosts whose controllers have no battery/BBU to silence the battery status trigger.</description>
+                </macro>
+            </macros>
         </template>
     </templates>
 </zabbix_export>

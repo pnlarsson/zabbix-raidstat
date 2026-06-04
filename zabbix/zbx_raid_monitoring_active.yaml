@@ -46,7 +46,7 @@ zabbix_export:
               preprocessing:
                 - type: JSONPATH
                   parameters:
-                    - $.cachestatus
+                    - $.batterystatus
               master_item:
                 key: 'raidstat.status.controller[{$RAID_VENDOR},{#CT_ID}]'
               tags:
@@ -54,7 +54,7 @@ zabbix_export:
                   value: 'RAID Cache Controllers'
               trigger_prototypes:
                 - uuid: e696c5ba2cb0435489773371a715ff96
-                  expression: 'find(/Template RAID Monitoring/raidstat.status.controller[{#CT_ID}, batterystatus],,"like","OK")=0'
+                  expression: 'find(/Template RAID Monitoring/raidstat.status.controller[{#CT_ID}, batterystatus],,"like","OK")=0 and "{$RAID_BBU_IGNORE}"<>"1"'
                   name: 'Controller {#CT_ID} battery status is {ITEM.LASTVALUE}'
                   priority: AVERAGE
             - uuid: c413f7d0f02f4543accb4b733114cd9c
@@ -250,3 +250,7 @@ zabbix_export:
               tags:
                 - tag: Application
                   value: 'Physical Drives'
+      macros:
+        - macro: '{$RAID_BBU_IGNORE}'
+          value: '0'
+          description: 'Set to 1 on hosts whose controllers have no battery/BBU to silence the battery status trigger.'
