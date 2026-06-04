@@ -26,5 +26,7 @@ install: build
 	install -m 644 config.json /opt/raidstat/config.json
 tar: build
 	tar cfz raidstat.tar.gz build --transform 's/build/raidstat/'
+test:
+	go test ./...
 
 .DEFAULT_GOAL = build
