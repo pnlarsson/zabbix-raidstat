@@ -7,6 +7,8 @@ Zabbix template provides LLD for controllers, logical and physical drives.
 There are two version, one for passive zabbix agent (zbx_raid_monitoring.xml) and one for active zabbix agent (zbx_raid_monitoring_active.yaml). 
 
 Configured host must have macros {$RAID_VENDOR} (as value for cli option `-vendor`).
+For a host running more than one RAID subsystem, set {$RAID_VENDOR} to a comma-separated
+list (e.g. `megacli,mdstat`); discovery runs every vendor and tags each item with {#VENDOR}.
 ![Example host](https://user-images.githubusercontent.com/31385755/65949183-5cf54e00-e444-11e9-9070-ef570a53c7e4.png)
 
 ```

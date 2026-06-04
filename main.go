@@ -16,8 +16,8 @@ const configFile = "config.json"
 
 var (
 	indent       int
-	toolVendor   string
-	toolBinary   string
+	vendors      []string          // requested vendors (comma-separated for discovery)
+	toolBinaries map[string]string // vendor -> raid tool binary
 	operation    string
 	argOption    string
 	controllerID string
@@ -30,11 +30,11 @@ func init() {
 	}
 
 	var (
-		configJSON      Config
-		vendors         []string
-		discoveryOption string
-		statusOption    string
-		options         []string
+		configJSON       Config
+		availableVendors []string
+		discoveryOption  string
+		statusOption     string
+		options          []string
 	)
 
 	ex, err := os.Executable()
@@ -65,8 +65,9 @@ func init() {
 		os.Exit(1)
 	}
 
-	for v := range configJSON.Vendors.(map[string]interface{}) {
-		vendors = append(vendors, v)
+	binaryMap := configJSON.Vendors.(map[string]interface{})
+	for v := range binaryMap {
+		availableVendors = append(availableVendors, v)
 	}
 
 	discoveryOptions := []string{"ct", "ld", "pd"}
@@ -80,12 +81,13 @@ Usage:
 
 Options:
   -v, --vendor <VENDOR>    raid tool vendor, one of: %[2]s
+                           (comma-separated for discovery, e.g. megacli,mdstat)
   -d, --discover <OPTION>  discovery option, one of: %[3]s
   -s, --status <OPTION>    status option, one of: %[4]s
   -i, --indent <INT>       indent json output level [default: 0]
 
   -h, --help               show this screen
-	`, programName, strings.Join(vendors, " | "), strings.Join(discoveryOptions, " | "), strings.Join(statusOptions, " | "))
+	`, programName, strings.Join(availableVendors, " | "), strings.Join(discoveryOptions, " | "), strings.Join(statusOptions, " | "))
 
 	cmdOpts, err := docopt.ParseDoc(usage)
 	if err != nil {
@@ -93,24 +95,34 @@ Options:
 		os.Exit(1)
 	}
 
-	toolVendor, _ = cmdOpts.String("--vendor")
+	vendorArg, _ := cmdOpts.String("--vendor")
 	discoveryOption, _ = cmdOpts.String("--discover")
 	statusOption, _ = cmdOpts.String("--status")
 	indent, _ = cmdOpts.Int("--indent")
 
-	for i, v := range vendors {
-		if v != toolVendor {
-			if i == len(vendors)-1 {
-				fmt.Printf("Vendors must be one of '%s' (ex.: -v adaptec), got '%s'.\n", strings.Join(vendors, " | "), toolVendor)
-				docopt.PrintHelpOnly(nil, usage)
-				os.Exit(1)
-			}
+	toolBinaries = map[string]string{}
+	for _, v := range strings.Split(vendorArg, ",") {
+		v = strings.TrimSpace(v)
+		if len(v) == 0 {
 			continue
 		}
-		break
+
+		binary, ok := binaryMap[v]
+		if !ok {
+			fmt.Printf("Vendors must be one of '%s' (ex.: -v adaptec), got '%s'.\n", strings.Join(availableVendors, " | "), v)
+			docopt.PrintHelpOnly(nil, usage)
+			os.Exit(1)
+		}
+
+		vendors = append(vendors, v)
+		toolBinaries[v] = binary.(string)
 	}
 
-	toolBinary = configJSON.Vendors.(map[string]interface{})[toolVendor].(string)
+	if len(vendors) == 0 {
+		fmt.Println("No vendor specified.")
+		docopt.PrintHelpOnly(nil, usage)
+		os.Exit(1)
+	}
 
 	if len(discoveryOption) != 0 {
 		operation = "Discovery"
@@ -151,40 +163,52 @@ Options:
 
 		break
 	}
+
+	// Status targets a single discovered element, so it must name exactly one vendor.
+	if operation == "Status" && len(vendors) != 1 {
+		fmt.Printf("Status requires a single vendor, got '%s'.\n", strings.Join(vendors, ","))
+		os.Exit(1)
+	}
 }
 
-func discoverControllers(p *plugin.Plugin) {
-	type (
-		Element struct {
-			CT string `json:"{#CT_ID}"`
-		}
-		Reply struct {
-			Data []Element `json:"data"`
-		}
-	)
-
-	var (
-		d    []Element
-		JSON []byte
-		jErr error
-	)
-
-	pGetControllersIDs, err := p.Lookup("GetControllersIDs")
+// openPlugin - load the shared object for a vendor from the executable's directory.
+func openPlugin(vendor string) *plugin.Plugin {
+	ex, err := os.Executable()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
-	controllersIDs := pGetControllersIDs.(func(string) []string)(toolBinary)
-
-	for _, v := range controllersIDs {
-		d = append(d, Element{CT: v})
+	p, err := plugin.Open(filepath.Dir(ex) + "/" + vendor + ".so")
+	if err != nil {
+		fmt.Printf("Error opening plugin '%s.so': %s\n", vendor, err)
+		os.Exit(1)
 	}
 
+	return p
+}
+
+// lookup - resolve an exported plugin symbol or exit.
+func lookup(p *plugin.Plugin, name string) plugin.Symbol {
+	sym, err := p.Lookup(name)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	return sym
+}
+
+// writeJSON - marshal v (honouring the indent flag) and write it to stdout.
+func writeJSON(v interface{}) {
+	var (
+		JSON []byte
+		jErr error
+	)
+
 	if indent > 0 {
-		JSON, jErr = json.MarshalIndent(Reply{d}, "", strings.Repeat(" ", indent))
+		JSON, jErr = json.MarshalIndent(v, "", strings.Repeat(" ", indent))
 	} else {
-		JSON, jErr = json.Marshal(Reply{d})
+		JSON, jErr = json.Marshal(v)
 	}
 
 	if jErr != nil {
@@ -195,174 +219,123 @@ func discoverControllers(p *plugin.Plugin) {
 	os.Stdout.Write(append(JSON, "\n"...))
 }
 
-func discoverLogicalDrives(p *plugin.Plugin) {
-	type (
-		Element struct {
-			CT string `json:"{#CT_ID}"`
-			LD string `json:"{#LD_ID}"`
+func discoverControllers() {
+	type Element struct {
+		Vendor string `json:"{#VENDOR}"`
+		CT     string `json:"{#CT_ID}"`
+	}
+	type Reply struct {
+		Data []Element `json:"data"`
+	}
+
+	d := []Element{}
+	for _, vendor := range vendors {
+		p := openPlugin(vendor)
+		getControllersIDs := lookup(p, "GetControllersIDs").(func(string) []string)
+
+		for _, ctID := range getControllersIDs(toolBinaries[vendor]) {
+			d = append(d, Element{Vendor: vendor, CT: ctID})
 		}
-		Reply struct {
-			Data []Element `json:"data"`
-		}
-	)
-
-	var (
-		d    []Element
-		JSON []byte
-		jErr error
-	)
-
-	pGetControllersIDs, err := p.Lookup("GetControllersIDs")
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
 	}
 
-	pGetLogicalDrivesIDs, err := p.Lookup("GetLogicalDrivesIDs")
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-
-	controllersIDs := pGetControllersIDs.(func(string) []string)(toolBinary)
-	for _, ctID := range controllersIDs {
-		logicalDrivesIDs := pGetLogicalDrivesIDs.(func(string, string) []string)(toolBinary, ctID)
-		for _, ldID := range logicalDrivesIDs {
-			d = append(d, Element{CT: ctID, LD: ldID})
-		}
-
-	}
-
-	if indent > 0 {
-		JSON, jErr = json.MarshalIndent(Reply{d}, "", strings.Repeat(" ", indent))
-	} else {
-		JSON, jErr = json.Marshal(Reply{d})
-	}
-
-	if err != nil {
-		fmt.Println(jErr)
-		os.Exit(1)
-	}
-
-	os.Stdout.Write(append(JSON, "\n"...))
+	writeJSON(Reply{d})
 }
 
-func discoverPhysicalDrives(p *plugin.Plugin) {
-	type (
-		Element struct {
-			CT string `json:"{#CT_ID}"`
-			PD string `json:"{#PD_ID}"`
+func discoverLogicalDrives() {
+	type Element struct {
+		Vendor string `json:"{#VENDOR}"`
+		CT     string `json:"{#CT_ID}"`
+		LD     string `json:"{#LD_ID}"`
+	}
+	type Reply struct {
+		Data []Element `json:"data"`
+	}
+
+	d := []Element{}
+	for _, vendor := range vendors {
+		p := openPlugin(vendor)
+		getControllersIDs := lookup(p, "GetControllersIDs").(func(string) []string)
+		getLogicalDrivesIDs := lookup(p, "GetLogicalDrivesIDs").(func(string, string) []string)
+
+		for _, ctID := range getControllersIDs(toolBinaries[vendor]) {
+			for _, ldID := range getLogicalDrivesIDs(toolBinaries[vendor], ctID) {
+				d = append(d, Element{Vendor: vendor, CT: ctID, LD: ldID})
+			}
 		}
-		Reply struct {
-			Data []Element `json:"data"`
-		}
-	)
-
-	var (
-		d    []Element
-		JSON []byte
-		jErr error
-	)
-
-	pGetControllersIDs, err := p.Lookup("GetControllersIDs")
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
 	}
 
-	pGetPhysicalDrivesIDs, err := p.Lookup("GetPhysicalDrivesIDs")
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-
-	controllersIDs := pGetControllersIDs.(func(string) []string)(toolBinary)
-	for _, ctID := range controllersIDs {
-		logicalDrivesIDs := pGetPhysicalDrivesIDs.(func(string, string) []string)(toolBinary, ctID)
-		for _, pdID := range logicalDrivesIDs {
-			d = append(d, Element{CT: ctID, PD: pdID})
-		}
-
-	}
-
-	if indent > 0 {
-		JSON, jErr = json.MarshalIndent(Reply{d}, "", strings.Repeat(" ", indent))
-	} else {
-		JSON, jErr = json.Marshal(Reply{d})
-	}
-
-	if err != nil {
-		fmt.Println(jErr)
-		os.Exit(1)
-	}
-
-	os.Stdout.Write(append(JSON, "\n"...))
+	writeJSON(Reply{d})
 }
 
-func getControllerStatus(p *plugin.Plugin, controllerID string) {
-	pGetControllerStatus, err := p.Lookup("GetControllerStatus")
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+func discoverPhysicalDrives() {
+	type Element struct {
+		Vendor string `json:"{#VENDOR}"`
+		CT     string `json:"{#CT_ID}"`
+		PD     string `json:"{#PD_ID}"`
+	}
+	type Reply struct {
+		Data []Element `json:"data"`
 	}
 
-	os.Stdout.Write(pGetControllerStatus.(func(string, string, int) []byte)(toolBinary, controllerID, indent))
+	d := []Element{}
+	for _, vendor := range vendors {
+		p := openPlugin(vendor)
+		getControllersIDs := lookup(p, "GetControllersIDs").(func(string) []string)
+		getPhysicalDrivesIDs := lookup(p, "GetPhysicalDrivesIDs").(func(string, string) []string)
+
+		for _, ctID := range getControllersIDs(toolBinaries[vendor]) {
+			for _, pdID := range getPhysicalDrivesIDs(toolBinaries[vendor], ctID) {
+				d = append(d, Element{Vendor: vendor, CT: ctID, PD: pdID})
+			}
+		}
+	}
+
+	writeJSON(Reply{d})
 }
 
-func getLDStatus(p *plugin.Plugin, controllerID string, deviceID string) {
-	pGetLDStatus, err := p.Lookup("GetLDStatus")
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-
-	os.Stdout.Write(pGetLDStatus.(func(string, string, string, int) []byte)(toolBinary, controllerID, deviceID, indent))
+func getControllerStatus(controllerID string) {
+	vendor := vendors[0]
+	p := openPlugin(vendor)
+	getControllerStatus := lookup(p, "GetControllerStatus").(func(string, string, int) []byte)
+	os.Stdout.Write(getControllerStatus(toolBinaries[vendor], controllerID, indent))
 }
 
-func getPDStatus(p *plugin.Plugin, controllerID string, deviceID string) {
-	pGetPDStatus, err := p.Lookup("GetPDStatus")
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
+func getLDStatus(controllerID string, deviceID string) {
+	vendor := vendors[0]
+	p := openPlugin(vendor)
+	getLDStatus := lookup(p, "GetLDStatus").(func(string, string, string, int) []byte)
+	os.Stdout.Write(getLDStatus(toolBinaries[vendor], controllerID, deviceID, indent))
+}
 
-	os.Stdout.Write(pGetPDStatus.(func(string, string, string, int) []byte)(toolBinary, controllerID, deviceID, indent))
+func getPDStatus(controllerID string, deviceID string) {
+	vendor := vendors[0]
+	p := openPlugin(vendor)
+	getPDStatus := lookup(p, "GetPDStatus").(func(string, string, string, int) []byte)
+	os.Stdout.Write(getPDStatus(toolBinaries[vendor], controllerID, deviceID, indent))
 }
 
 func main() {
-	ex, err := os.Executable()
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-
-	p, err := plugin.Open(filepath.Dir(ex) + "/" + toolVendor + ".so")
-	if err != nil {
-		fmt.Printf("Error opening plugin '%s.so': %s\n", toolVendor, err)
-		os.Exit(1)
-	}
-
 	switch argOption {
 	case "ct":
 		switch operation {
 		case "Discovery":
-			discoverControllers(p)
+			discoverControllers()
 		case "Status":
-			getControllerStatus(p, controllerID)
+			getControllerStatus(controllerID)
 		}
 	case "ld":
 		switch operation {
 		case "Discovery":
-			discoverLogicalDrives(p)
+			discoverLogicalDrives()
 		case "Status":
-			getLDStatus(p, controllerID, deviceID)
+			getLDStatus(controllerID, deviceID)
 		}
 	case "pd":
 		switch operation {
 		case "Discovery":
-			discoverPhysicalDrives(p)
+			discoverPhysicalDrives()
 		case "Status":
-			getPDStatus(p, controllerID, deviceID)
+			getPDStatus(controllerID, deviceID)
 		}
 	}
 }

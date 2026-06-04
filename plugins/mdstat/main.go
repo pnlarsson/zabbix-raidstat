@@ -19,7 +19,7 @@ import (
 // deviceLine matches a member row of `mdadm --detail` output, capturing the
 // state (group 1) and the device name (group 2):
 //
-//	   0       8        1        0      active sync   /dev/sda1
+//	0       8        1        0      active sync   /dev/sda1
 //
 // Rows without a /dev path (e.g. "removed") are intentionally not matched.
 var deviceLine = regexp.MustCompile(`(?m)^\s*\d+\s+\d+\s+\d+\s+\S+\s+(.+?)\s+/dev/(\S+)\s*$`)
