@@ -1,5 +1,5 @@
-### Zabbix RAID monitoring for Adaptec/Microsemi, HP Smart Array, Lenovo M.2 RAID (mvcli), LSI MegaRAID (megacli) and LSI (sas2ircu)
-Simple parser for `arcconf`, `ssacli`, `mvcli`, `megacli` and sas2ircu written in Go.
+### Zabbix RAID monitoring for Adaptec/Microsemi, HP Smart Array, Lenovo M.2 RAID (mvcli), LSI MegaRAID (megacli), LSI (sas2ircu) and Linux software RAID (mdadm)
+Simple parser for `arcconf`, `ssacli`, `mvcli`, `megacli`, `sas2ircu` and `mdadm` written in Go.
 
 Zabbix template provides LLD for controllers, logical and physical drives.
 ![Discovery](https://user-images.githubusercontent.com/31385755/65332764-f9f3f380-dbc7-11e9-9d08-9a2e5bc236bf.png)
@@ -16,7 +16,7 @@ Usage:
   zabbix-raidstat (-v <VENDOR>) (-d <OPTION> | -s <OPTION>) [-i <INT>]
 
 Options:
-  -v, --vendor <VENDOR>    raid tool vendor, one of: adaptec | hp | marvell | megacli | sas2ircu
+  -v, --vendor <VENDOR>    raid tool vendor, one of: adaptec | hp | marvell | megacli | sas2ircu | mdstat
   -d, --discover <OPTION>  discovery option, one of: ct | ld | pd
   -s, --status <OPTION>    status option, one of: ct,<CONTROLLER_ID> | ld,<CONTROLLER_ID>,<LD_ID> | pd,<CONTROLLER_ID>,<PD_ID>
   -i, --indent <INT>       indent json output level [default: 0]

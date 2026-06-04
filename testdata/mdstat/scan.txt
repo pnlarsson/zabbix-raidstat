@@ -1,0 +1,5 @@
+ARRAY /dev/md0 metadata=1.2 name=host:0 UUID=11111111:22222222:33333333:44444444
+ARRAY /dev/md1 metadata=1.2 name=host:1 UUID=aaaaaaaa:bbbbbbbb:cccccccc:dddddddd
+ARRAY /dev/md/2 metadata=1.2 name=host:2 UUID=43cf6029:ecbab275:7bd1f9ea:f9c29c3e
+ARRAY /dev/md/imsm0 metadata=imsm UUID=2ce86838:e6dd0d0d:dfa8969b:c3ffb41a
+ARRAY /dev/md/Volume0_0 container=/dev/md/imsm0 member=0 UUID=eb5a68d2:08a80c0f:27f892f0:afb27660

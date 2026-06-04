@@ -11,6 +11,7 @@ build:
 	go build -ldflags=$(LD_FLAGS) -buildmode=plugin -o $(BUILD_DIR)/marvell.so plugins/marvell/main.go
 	go build -ldflags=$(LD_FLAGS) -buildmode=plugin -o $(BUILD_DIR)/megacli.so plugins/megacli/main.go
 	go build -ldflags=$(LD_FLAGS) -buildmode=plugin -o $(BUILD_DIR)/sas2ircu.so plugins/sas2ircu/main.go
+	go build -ldflags=$(LD_FLAGS) -buildmode=plugin -o $(BUILD_DIR)/mdstat.so plugins/mdstat/main.go
 	go build -ldflags=$(LD_FLAGS) -o $(BUILD_DIR)/raidstat main.go
 	install -m 644 config.json $(BUILD_DIR)/config.json
 install: build
@@ -20,6 +21,7 @@ install: build
 	install -m 644 $(BUILD_DIR)/marvell.so /opt/raidstat/marvell.so
 	install -m 644 $(BUILD_DIR)/megacli.so /opt/raidstat/megacli.so
 	install -m 644 $(BUILD_DIR)/sas2ircu.so /opt/raidstat/sas2ircu.so
+	install -m 644 $(BUILD_DIR)/mdstat.so /opt/raidstat/mdstat.so
 	install -m 755 $(BUILD_DIR)/raidstat /opt/raidstat/raidstat
 	install -m 644 config.json /opt/raidstat/config.json
 tar: build

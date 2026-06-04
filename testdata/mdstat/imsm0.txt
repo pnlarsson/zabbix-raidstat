@@ -1,0 +1,15 @@
+/dev/md/imsm0:
+           Version : imsm
+        Raid Level : container
+     Total Devices : 2
+
+   Working Devices : 2
+
+
+              UUID : 2ce86838:e6dd0d0d:dfa8969b:c3ffb41a
+     Member Arrays : /dev/md/Volume0_0
+
+    Number   Major   Minor   RaidDevice
+
+       -       8        0        -        /dev/sda
+       -       8       16        -        /dev/sdb

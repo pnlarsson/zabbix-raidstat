@@ -1,0 +1,20 @@
+/dev/md/Volume0_0:
+         Container : /dev/md/imsm0, member 0
+        Raid Level : raid1
+        Array Size : 222715904 (212.40 GiB 228.06 GB)
+     Used Dev Size : 222715904 (212.40 GiB 228.06 GB)
+      Raid Devices : 2
+     Total Devices : 2
+
+             State : active
+    Active Devices : 2
+   Working Devices : 2
+    Failed Devices : 0
+
+Consistency Policy : resync
+
+
+              UUID : eb5a68d2:08a80c0f:27f892f0:afb27660
+    Number   Major   Minor   RaidDevice State
+       1       8        0        0      active sync   /dev/sda
+       0       8       16        1      active sync   /dev/sdb
